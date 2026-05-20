@@ -1,0 +1,5 @@
+{"sessionId":"7d6fcb","timestamp":1779215065981,"hypothesisId":"B","location":"db.js:connectDB:entry","message":"MONGO_URI presence and scheme","data":{"hasMongoUri":true,"uriScheme":"mongodb+srv","uriLength":107}}
+{"sessionId":"7d6fcb","timestamp":1779215066152,"hypothesisId":"A","location":"db.js:connectDB:dns-default","message":"Default DNS SRV lookup failed","data":{"errorCode":"ECONNREFUSED","errorMessage":"querySrv ECONNREFUSED _mongodb._tcp.cluster0.ntpvnhe.mongodb.net","dnsServers":["127.0.0.1"]}}
+{"sessionId":"7d6fcb","timestamp":1779215103478,"hypothesisId":"B","location":"db.js:connectDB:entry","message":"MONGO_URI presence and scheme","data":{"hasMongoUri":true,"uriScheme":"mongodb+srv","uriLength":107}}
+{"sessionId":"7d6fcb","timestamp":1779215103753,"runId":"post-fix","hypothesisId":"A","location":"db.js:connectDB:dns-after-setServers","message":"DNS SRV lookup succeeded after setServers","data":{"recordCount":3,"dnsServers":["8.8.8.8","1.1.1.1"]}}
+{"sessionId":"7d6fcb","timestamp":1779215106477,"hypothesisId":"E","location":"db.js:connectDB:mongoose","message":"mongoose.connect succeeded","data":{"readyState":1}}
