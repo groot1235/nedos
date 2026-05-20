@@ -12,3 +12,6 @@
 {"sessionId":"7d6fcb","timestamp":1779266881173,"hypothesisId":"B","location":"db.js:connectDB:entry","message":"MONGO_URI presence and scheme","data":{"hasMongoUri":true,"uriScheme":"mongodb+srv","uriLength":107}}
 {"sessionId":"7d6fcb","timestamp":1779266881214,"runId":"post-fix","hypothesisId":"A","location":"db.js:connectDB:dns-after-setServers","message":"DNS SRV lookup succeeded after setServers","data":{"recordCount":3,"dnsServers":["8.8.8.8","1.1.1.1"]}}
 {"sessionId":"7d6fcb","timestamp":1779266883470,"hypothesisId":"E","location":"db.js:connectDB:mongoose","message":"mongoose.connect succeeded","data":{"readyState":1}}
+{"sessionId":"7d6fcb","timestamp":1779268232435,"hypothesisId":"B","location":"db.js:connectDB:entry","message":"MONGO_URI presence and scheme","data":{"hasMongoUri":true,"uriScheme":"mongodb+srv","uriLength":107}}
+{"sessionId":"7d6fcb","timestamp":1779268232480,"runId":"post-fix","hypothesisId":"A","location":"db.js:connectDB:dns-after-setServers","message":"DNS SRV lookup succeeded after setServers","data":{"recordCount":3,"dnsServers":["8.8.8.8","1.1.1.1"]}}
+{"sessionId":"7d6fcb","timestamp":1779268234726,"hypothesisId":"E","location":"db.js:connectDB:mongoose","message":"mongoose.connect succeeded","data":{"readyState":1}}
