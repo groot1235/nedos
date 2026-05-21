@@ -2,8 +2,13 @@ import asyncHandler from "express-async-handler";
 import User from "../models/user.model.js";
 import Notification from "../models/notification.model.js";
 
-import { getAuth } from "@clerk/express";
-import { clerkClient } from "@clerk/express";
+import { createClerkClient } from "@clerk/express";
+import { getClerkUserId } from "../utils/getClerkUserId.js";
+
+const clerkClient = createClerkClient({
+  secretKey: process.env.CLERK_SECRET_KEY,
+  publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+});
 
 export const getUserProfile = asyncHandler(async (req, res) => {
   const { username } = req.params;
@@ -14,7 +19,7 @@ export const getUserProfile = asyncHandler(async (req, res) => {
 });
 
 export const updateProfile = asyncHandler(async (req, res) => {
-  const { userId } = getAuth(req);
+  const userId = getClerkUserId(req);
 
   const user = await User.findOneAndUpdate({ clerkId: userId }, req.body, { new: true });
 
@@ -24,23 +29,35 @@ export const updateProfile = asyncHandler(async (req, res) => {
 });
 
 export const syncUser = asyncHandler(async (req, res) => {
-  const { userId } = getAuth(req);
+  const userId = getClerkUserId(req);
 
-  // check if user already exists in mongodb
   const existingUser = await User.findOne({ clerkId: userId });
   if (existingUser) {
     return res.status(200).json({ user: existingUser, message: "User already exists" });
   }
 
-  // create new user from Clerk data
   const clerkUser = await clerkClient.users.getUser(userId);
+  const primaryEmail = clerkUser.emailAddresses[0]?.emailAddress;
+
+  if (!primaryEmail) {
+    return res.status(400).json({ error: "Clerk user has no email address" });
+  }
+
+  const baseUsername = primaryEmail.split("@")[0];
+  let username = baseUsername;
+  let suffix = 1;
+
+  while (await User.findOne({ username })) {
+    username = `${baseUsername}${suffix}`;
+    suffix += 1;
+  }
 
   const userData = {
     clerkId: userId,
-    email: clerkUser.emailAddresses[0].emailAddress,
+    email: primaryEmail,
     firstName: clerkUser.firstName || "",
     lastName: clerkUser.lastName || "",
-    username: clerkUser.emailAddresses[0].emailAddress.split("@")[0],
+    username,
     profilePicture: clerkUser.imageUrl || "",
   };
 
@@ -50,7 +67,7 @@ export const syncUser = asyncHandler(async (req, res) => {
 });
 
 export const getCurrentUser = asyncHandler(async (req, res) => {
-  const { userId } = getAuth(req);
+  const userId = getClerkUserId(req);
   const user = await User.findOne({ clerkId: userId });
 
   if (!user) return res.status(404).json({ error: "User not found" });
@@ -59,15 +76,17 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
 });
 
 export const followUser = asyncHandler(async (req, res) => {
-  const { userId } = getAuth(req);
+  const userId = getClerkUserId(req);
   const { targetUserId } = req.params;
-
-  if (userId === targetUserId) return res.status(400).json({ error: "You cannot follow yourself" });
 
   const currentUser = await User.findOne({ clerkId: userId });
   const targetUser = await User.findById(targetUserId);
 
   if (!currentUser || !targetUser) return res.status(404).json({ error: "User not found" });
+
+  if (currentUser._id.toString() === targetUserId) {
+    return res.status(400).json({ error: "You cannot follow yourself" });
+  }
 
   const isFollowing = currentUser.following.includes(targetUserId);
 
@@ -99,4 +118,52 @@ export const followUser = asyncHandler(async (req, res) => {
   res.status(200).json({
     message: isFollowing ? "User unfollowed successfully" : "User followed successfully",
   });
+});
+
+export const searchUsers = asyncHandler(async (req, res) => {
+  const { q } = req.query;
+  const userId = getClerkUserId(req);
+
+  if (!q) {
+    return res.status(200).json({ users: [] });
+  }
+
+  // Find current user's DB record to exclude them from results
+  const currentUser = await User.findOne({ clerkId: userId });
+  const excludeId = currentUser ? currentUser._id : null;
+
+  const query = {
+    $and: [
+      {
+        $or: [
+          { username: { $regex: q, $options: "i" } },
+          { firstName: { $regex: q, $options: "i" } },
+          { lastName: { $regex: q, $options: "i" } },
+        ],
+      },
+    ],
+  };
+
+  if (excludeId) {
+    query.$and.push({ _id: { $ne: excludeId } });
+  }
+
+  const users = await User.find(query)
+    .select("username firstName lastName profilePicture followers following")
+    .limit(20);
+
+  // Return users with a flag indicating if the current user is following them
+  const formattedUsers = users.map((u) => {
+    const isFollowing = currentUser ? currentUser.following.includes(u._id) : false;
+    return {
+      _id: u._id,
+      username: u.username,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      profilePicture: u.profilePicture,
+      isFollowing,
+    };
+  });
+
+  res.status(200).json({ users: formattedUsers });
 });
