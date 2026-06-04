@@ -42,6 +42,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    homeLocality: {
+      type: String,
+      required: true,
+      index: true,
+      default: "PENDING",
+    },
     followers: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -54,6 +60,16 @@ const userSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
+    blockedUsers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    expoPushToken: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true }
 );

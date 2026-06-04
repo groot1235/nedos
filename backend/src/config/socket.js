@@ -29,6 +29,29 @@ io.on("connection", (socket) => {
   // Send list of online users to all clients
   io.emit("getOnlineUsers", Object.keys(userSocketMap));
 
+  // Handle typing status
+  socket.on("typing", ({ recipientId }) => {
+    const recipientSocketId = getRecipientSocketId(recipientId);
+    if (recipientSocketId) {
+      io.to(recipientSocketId).emit("typing", { senderId: userId });
+    }
+  });
+
+  socket.on("stopTyping", ({ recipientId }) => {
+    const recipientSocketId = getRecipientSocketId(recipientId);
+    if (recipientSocketId) {
+      io.to(recipientSocketId).emit("stopTyping", { senderId: userId });
+    }
+  });
+
+  // Handle real-time read receipt updates
+  socket.on("messagesRead", ({ senderId }) => {
+    const senderSocketId = getRecipientSocketId(senderId);
+    if (senderSocketId) {
+      io.to(senderSocketId).emit("messagesRead", { senderId, recipientId: userId });
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
     if (userId) {
