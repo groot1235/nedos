@@ -1,6 +1,8 @@
 import asyncHandler from "express-async-handler";
 import User from "../models/user.model.js";
+import Zone from "../models/zone.model.js";
 import Notification from "../models/notification.model.js";
+import cloudinary from "../config/cloudinary.js";
 
 import { createClerkClient } from "@clerk/express";
 import { getClerkUserId } from "../utils/getClerkUserId.js";
@@ -20,8 +22,31 @@ export const getUserProfile = asyncHandler(async (req, res) => {
 
 export const updateProfile = asyncHandler(async (req, res) => {
   const userId = getClerkUserId(req);
+  const updateData = { ...req.body };
 
-  const user = await User.findOneAndUpdate({ clerkId: userId }, req.body, { new: true });
+  // Helper to upload base64 image to Cloudinary
+  const uploadBase64 = async (base64Str, folder = "profiles") => {
+    try {
+      const uploadResponse = await cloudinary.uploader.upload(base64Str, {
+        folder,
+        resource_type: "image",
+      });
+      return uploadResponse.secure_url;
+    } catch (error) {
+      console.error("Cloudinary upload error in profile update:", error);
+      throw new Error("Failed to upload image to Cloudinary");
+    }
+  };
+
+  if (updateData.profilePicture && updateData.profilePicture.startsWith("data:")) {
+    updateData.profilePicture = await uploadBase64(updateData.profilePicture, "profiles/avatars");
+  }
+
+  if (updateData.bannerImage && updateData.bannerImage.startsWith("data:")) {
+    updateData.bannerImage = await uploadBase64(updateData.bannerImage, "profiles/banners");
+  }
+
+  const user = await User.findOneAndUpdate({ clerkId: userId }, updateData, { new: true });
 
   if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -59,6 +84,7 @@ export const syncUser = asyncHandler(async (req, res) => {
     lastName: clerkUser.lastName || "",
     username,
     profilePicture: clerkUser.imageUrl || "",
+    homeLocality: "PENDING",
   };
 
   const user = await User.create(userData);
@@ -166,4 +192,83 @@ export const searchUsers = asyncHandler(async (req, res) => {
   });
 
   res.status(200).json({ users: formattedUsers });
+});
+
+export const blockUser = asyncHandler(async (req, res) => {
+  const userId = getClerkUserId(req);
+  const { targetUserId } = req.params;
+
+  const currentUser = await User.findOne({ clerkId: userId });
+  if (!currentUser) return res.status(404).json({ error: "User not found" });
+
+  if (currentUser._id.toString() === targetUserId) {
+    return res.status(400).json({ error: "You cannot block yourself" });
+  }
+
+  const isBlocked = currentUser.blockedUsers?.includes(targetUserId);
+
+  if (isBlocked) {
+    // Unblock
+    await User.findByIdAndUpdate(currentUser._id, {
+      $pull: { blockedUsers: targetUserId },
+    });
+    res.status(200).json({ message: "User unblocked successfully", blocked: false });
+  } else {
+    // Block
+    await User.findByIdAndUpdate(currentUser._id, {
+      $push: { blockedUsers: targetUserId },
+    });
+    // Clean up follow relationships
+    await User.findByIdAndUpdate(currentUser._id, {
+      $pull: { following: targetUserId, followers: targetUserId },
+    });
+    await User.findByIdAndUpdate(targetUserId, {
+      $pull: { following: currentUser._id, followers: currentUser._id },
+    });
+    res.status(200).json({ message: "User blocked successfully", blocked: true });
+  }
+});
+
+export const detectZone = asyncHandler(async (req, res) => {
+  const { latitude, longitude } = req.body;
+
+  if (!latitude || !longitude) {
+    return res.status(400).json({ error: "Latitude and longitude are required" });
+  }
+
+  try {
+    const zone = await Zone.findOne({
+      boundary: {
+        $geoIntersects: {
+          $geometry: {
+            type: "Point",
+            coordinates: [parseFloat(longitude), parseFloat(latitude)],
+          },
+        },
+      },
+    });
+
+    if (zone) {
+      return res.status(200).json({ zoneName: zone.name });
+    }
+    res.status(200).json({ zoneName: null });
+  } catch (err) {
+    console.error("Error detecting spatial zone polygon:", err);
+    res.status(500).json({ error: "Failed to detect zone" });
+  }
+});
+
+export const updatePushToken = asyncHandler(async (req, res) => {
+  const userId = getClerkUserId(req);
+  const { token } = req.body;
+
+  const user = await User.findOneAndUpdate(
+    { clerkId: userId },
+    { expoPushToken: token || "" },
+    { new: true }
+  );
+
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  res.status(200).json({ success: true, user });
 });

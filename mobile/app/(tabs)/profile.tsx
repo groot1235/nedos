@@ -10,13 +10,28 @@ import {
   TextInput,
   Alert,
   FlatList,
+  Linking,
 } from "react-native";
 import { useAuth, useUser } from "@clerk/expo";
 import { useRouter } from "expo-router";
-import { Feather } from "@expo/vector-icons";
+import { Feather, FontAwesome } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { TabScreen } from "@/components/TabScreen";
 import { useUserContext } from "@/context/UserContext";
 import { API_URL } from "@/utils/api";
+
+const convertUriToBase64 = async (uri: string): Promise<string> => {
+  const response = await fetch(uri);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      resolve(reader.result as string);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
 
 type PostType = {
   _id: string;
@@ -26,12 +41,135 @@ type PostType = {
     firstName: string;
     lastName: string;
     profilePicture?: string;
+    location?: string;
   };
   content: string;
   image?: string;
+  images?: string[];
   likes: string[];
   comments: any[];
+  savedBy?: string[];
   createdAt: string;
+};
+
+// Parse and format hashtags, mentions, and URLs
+const renderFormattedContent = (content: string, router: any) => {
+  if (!content) return null;
+
+  const parts = content.split(/(https?:\/\/\S+|www\.\S+|#\w+|@\w+)/g);
+
+  return (
+    <Text className="text-gray-900 text-[15px] mt-1 leading-5">
+      {parts.map((part, index) => {
+        if (part.startsWith("#")) {
+          return (
+            <Text
+              key={index}
+              className="text-[#2b4afc] font-semibold"
+              onPress={() => {
+                router.push({
+                  pathname: "/search",
+                  params: { q: part }
+                });
+              }}
+            >
+              {part}
+            </Text>
+          );
+        } else if (part.startsWith("@")) {
+          const username = part.substring(1).replace(/[^\w]/g, "");
+          return (
+            <Text
+              key={index}
+              className="text-[#2b4afc] font-semibold"
+              onPress={() => {
+                router.push(`/user/${username}` as any);
+              }}
+            >
+              {part}
+            </Text>
+          );
+        } else if (/^(https?:\/\/|www\.)/.test(part)) {
+          const url = part.startsWith("http") ? part : `https://${part}`;
+          return (
+            <Text
+              key={index}
+              className="text-[#2b4afc] underline"
+              onPress={() => {
+                Linking.openURL(url).catch(() => {});
+              }}
+            >
+              {part}
+            </Text>
+          );
+        }
+        return part;
+      })}
+    </Text>
+  );
+};
+
+// Render responsive multi-image collages
+const renderPostImages = (images?: string[], fallbackImage?: string) => {
+  const displayImages = images && images.length > 0 
+    ? images 
+    : fallbackImage 
+      ? [fallbackImage] 
+      : [];
+
+  if (displayImages.length === 0) return null;
+
+  const numImages = displayImages.length;
+  if (numImages === 1) {
+    return (
+      <Image
+        source={{ uri: displayImages[0] }}
+        className="w-full h-52 rounded-xl mt-3 bg-gray-100"
+        resizeMode="cover"
+      />
+    );
+  }
+
+  if (numImages === 2) {
+    return (
+      <View className="flex-row gap-2 mt-3 h-40">
+        <Image source={{ uri: displayImages[0] }} className="flex-1 rounded-xl bg-gray-100" resizeMode="cover" />
+        <Image source={{ uri: displayImages[1] }} className="flex-1 rounded-xl bg-gray-100" resizeMode="cover" />
+      </View>
+    );
+  }
+
+  if (numImages === 3) {
+    return (
+      <View className="flex-row gap-2 mt-3 h-44">
+        <Image source={{ uri: displayImages[0] }} className="flex-[2] rounded-l-xl bg-gray-100" resizeMode="cover" />
+        <View className="flex-1 gap-2">
+          <Image source={{ uri: displayImages[1] }} className="flex-1 rounded-tr-xl bg-gray-100" resizeMode="cover" />
+          <Image source={{ uri: displayImages[2] }} className="flex-1 rounded-br-xl bg-gray-100" resizeMode="cover" />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View className="flex-row gap-2 mt-3 h-48">
+      <View className="flex-1 gap-2">
+        <Image source={{ uri: displayImages[0] }} className="flex-1 rounded-tl-xl bg-gray-100" resizeMode="cover" />
+        <Image source={{ uri: displayImages[1] }} className="flex-1 rounded-bl-xl bg-gray-100" resizeMode="cover" />
+      </View>
+      <View className="flex-1 gap-2">
+        <Image source={{ uri: displayImages[2] }} className="flex-1 rounded-tr-xl bg-gray-100" resizeMode="cover" />
+        <View className="flex-1 relative rounded-br-xl overflow-hidden">
+          <Image source={{ uri: displayImages[3] }} className="w-full h-full bg-gray-100" resizeMode="cover" />
+          {numImages > 4 && (
+            <View className="absolute inset-0 bg-black/50 items-center justify-center">
+              <Text className="text-white font-bold text-lg">+{numImages - 4}</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </View>
+  );
 };
 
 export default function ProfileScreen() {
@@ -42,11 +180,12 @@ export default function ProfileScreen() {
   const router = useRouter();
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<"posts" | "likes">("posts");
+  const [activeTab, setActiveTab] = useState<"posts" | "likes" | "saved">("posts");
 
   // Posts Feed State
   const [posts, setPosts] = useState<PostType[]>([]);
   const [likedPosts, setLikedPosts] = useState<PostType[]>([]);
+  const [savedPosts, setSavedPosts] = useState<PostType[]>([]);
   const [isPostsLoading, setIsPostsLoading] = useState(false);
 
   // Edit Profile Form State
@@ -76,8 +215,10 @@ export default function ProfileScreen() {
     if (dbUser) {
       if (activeTab === "posts") {
         fetchUserPosts();
-      } else {
+      } else if (activeTab === "likes") {
         fetchLikedPosts();
+      } else if (activeTab === "saved") {
+        fetchSavedPosts();
       }
     }
   }, [activeTab, dbUser]);
@@ -123,6 +264,25 @@ export default function ProfileScreen() {
     }
   };
 
+  const fetchSavedPosts = async () => {
+    try {
+      setIsPostsLoading(true);
+      const token = await getToken();
+      const response = await fetch(`${API_URL}/api/posts/saved`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch saved posts");
+      const data = await response.json();
+      setSavedPosts(data.posts || []);
+    } catch (err) {
+      console.error("Error fetching saved posts:", err);
+    } finally {
+      setIsPostsLoading(false);
+    }
+  };
+
   const handleLikePost = async (postId: string) => {
     if (!dbUser?._id) return;
     try {
@@ -150,8 +310,46 @@ export default function ProfileScreen() {
 
       setPosts((prev) => updateLikes(prev));
       setLikedPosts((prev) => updateLikes(prev));
+      setSavedPosts((prev) => updateLikes(prev));
     } catch (err) {
       console.error("Error liking post:", err);
+    }
+  };
+
+  const handleSavePost = async (postId: string) => {
+    if (!dbUser?._id) return;
+    try {
+      const token = await getToken();
+      const response = await fetch(`${API_URL}/api/posts/${postId}/save`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to save post");
+      
+      if (activeTab === "saved") {
+        setSavedPosts((prev) => prev.filter((p) => p._id !== postId));
+      } else {
+        const updateSaved = (list: PostType[]) =>
+          list.map((p) => {
+            if (p._id === postId) {
+              const savedBy = p.savedBy || [];
+              const hasSaved = dbUser?._id ? savedBy.includes(dbUser._id) : false;
+              const nextSavedBy = hasSaved
+                ? savedBy.filter((id: string) => id !== dbUser?._id)
+                : (dbUser?._id ? [...savedBy, dbUser._id] : savedBy);
+              return { ...p, savedBy: nextSavedBy };
+            }
+            return p;
+          });
+        setPosts((prev) => updateSaved(prev));
+        setLikedPosts((prev) => updateSaved(prev));
+        setSavedPosts((prev) => updateSaved(prev));
+      }
+    } catch (err) {
+      console.error("Error saving post:", err);
     }
   };
 
@@ -175,6 +373,7 @@ export default function ProfileScreen() {
 
             setPosts((prev) => prev.filter((p) => p._id !== postId));
             setLikedPosts((prev) => prev.filter((p) => p._id !== postId));
+            setSavedPosts((prev) => prev.filter((p) => p._id !== postId));
             Alert.alert("Success", "Post deleted successfully");
           } catch (err) {
             console.error("Error deleting post:", err);
@@ -218,6 +417,62 @@ export default function ProfileScreen() {
     }
   };
 
+  const pickProfilePicture = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permissionResult.granted === false) {
+      Alert.alert("Permission Required", "Permission to access photos is required!");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      try {
+        setIsSaving(true);
+        const base64 = await convertUriToBase64(result.assets[0].uri);
+        setProfilePicture(base64);
+      } catch (err) {
+        console.error("Failed to convert profile picture:", err);
+        Alert.alert("Error", "Failed to process selected image.");
+      } finally {
+        setIsSaving(false);
+      }
+    }
+  };
+
+  const pickBannerImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permissionResult.granted === false) {
+      Alert.alert("Permission Required", "Permission to access photos is required!");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [16, 9],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      try {
+        setIsSaving(true);
+        const base64 = await convertUriToBase64(result.assets[0].uri);
+        setBannerImage(base64);
+      } catch (err) {
+        console.error("Failed to convert banner image:", err);
+        Alert.alert("Error", "Failed to process selected image.");
+      } finally {
+        setIsSaving(false);
+      }
+    }
+  };
+
   const handleSignOut = async () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
       { text: "Cancel", style: "cancel" },
@@ -248,9 +503,9 @@ export default function ProfileScreen() {
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
-  const getFormattedJoinedDate = (dateString?: string) => {
-    if (!dateString) return "";
-    const date = new Date(dateString);
+  const getFormattedJoinedDate = (dateVal?: any) => {
+    if (!dateVal) return "";
+    const date = new Date(dateVal);
     return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   };
 
@@ -272,6 +527,7 @@ export default function ProfileScreen() {
   const renderPostItem = ({ item }: { item: PostType }) => {
     const isOwnPost = item.user?.username === dbUser?.username;
     const hasLiked = dbUser?._id ? item.likes?.includes(dbUser._id) : false;
+    const isSaved = dbUser?._id ? item.savedBy?.includes(dbUser._id) : false;
 
     return (
       <View className="px-4 py-3.5 border-b border-gray-100 flex-row bg-white">
@@ -287,13 +543,21 @@ export default function ProfileScreen() {
         <View className="flex-1">
           {/* Header Row */}
           <View className="flex-row justify-between items-center">
-            <View className="flex-row items-center flex-wrap gap-x-1.5">
-              <Text className="font-bold text-gray-900 text-[15px]">
+            <View className="flex-row items-center flex-wrap gap-x-1.5 flex-1">
+              <Text className="font-bold text-gray-900 text-[15px]" numberOfLines={1}>
                 {`${item.user?.firstName || ""} ${item.user?.lastName || ""}`.trim() ||
                   item.user?.username ||
                   "User"}
               </Text>
-              <Text className="text-gray-500 text-[14px]">
+              {item.user?.location ? (
+                <View className="bg-gray-100 px-1.5 py-0.5 rounded-md flex-row items-center">
+                  <Feather name="map-pin" size={10} color="#657786" />
+                  <Text className="text-[10px] text-gray-500 font-semibold ml-0.5" numberOfLines={1}>
+                    {item.user.location}
+                  </Text>
+                </View>
+              ) : null}
+              <Text className="text-gray-500 text-[14px]" numberOfLines={1}>
                 @{item.user?.username || "username"}
               </Text>
               <Text className="text-gray-400 text-[14px]">·</Text>
@@ -310,18 +574,10 @@ export default function ProfileScreen() {
           </View>
 
           {/* Text Content */}
-          <Text className="text-gray-900 text-[15px] mt-1 leading-5">
-            {item.content}
-          </Text>
+          {renderFormattedContent(item.content, router)}
 
-          {/* Optional Post Image */}
-          {item.image ? (
-            <Image
-              source={{ uri: item.image }}
-              className="w-full h-48 rounded-xl mt-3 bg-gray-100"
-              resizeMode="cover"
-            />
-          ) : null}
+          {/* Optional Post Image / Collaged images */}
+          {renderPostImages(item.images, item.image)}
 
           {/* Actions Row */}
           <View className="flex-row justify-between items-center mt-3.5 pr-8">
@@ -342,15 +598,26 @@ export default function ProfileScreen() {
               onPress={() => handleLikePost(item._id)}
               className="flex-row items-center gap-1.5 p-1"
             >
-              <Feather
-                name={hasLiked ? "heart" : "heart"}
-                size={17}
+              <FontAwesome
+                name={hasLiked ? "heart" : "heart-o"}
+                size={16}
                 color={hasLiked ? "#e0245e" : "#657786"}
-                style={hasLiked ? { fill: "#e0245e" } : null}
               />
               <Text className={`text-xs ${hasLiked ? "text-[#e0245e]" : "text-gray-500"}`}>
                 {item.likes?.length || 0}
               </Text>
+            </TouchableOpacity>
+
+            {/* Save/Bookmark Action */}
+            <TouchableOpacity
+              onPress={() => handleSavePost(item._id)}
+              className="p-1"
+            >
+              <FontAwesome
+                name={isSaved ? "bookmark" : "bookmark-o"}
+                size={16}
+                color={isSaved ? "#2b4afc" : "#657786"}
+              />
             </TouchableOpacity>
 
             {/* Share Action */}
@@ -492,6 +759,21 @@ export default function ProfileScreen() {
             <View className="absolute bottom-0 w-16 h-1 bg-blue-500 rounded-full" />
           )}
         </TouchableOpacity>
+        <TouchableOpacity
+          className="flex-1 py-3 items-center justify-center relative"
+          onPress={() => setActiveTab("saved")}
+        >
+          <Text
+            className={`font-bold text-[15px] ${
+              activeTab === "saved" ? "text-gray-900" : "text-gray-500"
+            }`}
+          >
+            Saved
+          </Text>
+          {activeTab === "saved" && (
+            <View className="absolute bottom-0 w-16 h-1 bg-blue-500 rounded-full" />
+          )}
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -501,7 +783,7 @@ export default function ProfileScreen() {
       <View className="flex-1 bg-white">
         {/* Posts/Likes List */}
         <FlatList
-          data={activeTab === "posts" ? posts : likedPosts}
+          data={activeTab === "posts" ? posts : activeTab === "likes" ? likedPosts : savedPosts}
           renderItem={renderPostItem}
           keyExtractor={(item) => item._id}
           ListHeaderComponent={profileHeader}
@@ -513,23 +795,29 @@ export default function ProfileScreen() {
             ) : (
               <View className="py-12 px-4 items-center justify-center">
                 <Feather
-                  name={activeTab === "posts" ? "edit-3" : "heart"}
+                  name={activeTab === "posts" ? "edit-3" : activeTab === "likes" ? "heart" : "bookmark"}
                   size={36}
                   color="#657786"
                 />
                 <Text className="text-gray-500 font-bold text-base mt-3">
-                  {activeTab === "posts" ? "No posts yet" : "No liked posts yet"}
+                  {activeTab === "posts"
+                    ? "No posts yet"
+                    : activeTab === "likes"
+                    ? "No liked posts yet"
+                    : "No saved posts yet"}
                 </Text>
                 <Text className="text-gray-400 text-sm text-center mt-1">
                   {activeTab === "posts"
                     ? "When you post updates, they will appear here."
-                    : "Tap the heart icon on any post to add it to your likes."}
+                    : activeTab === "likes"
+                    ? "Tap the heart icon on any post to add it to your likes."
+                    : "Tap the bookmark icon on any post to save it for later."}
                 </Text>
               </View>
             )
           }
           refreshing={isPostsLoading}
-          onRefresh={activeTab === "posts" ? fetchUserPosts : fetchLikedPosts}
+          onRefresh={activeTab === "posts" ? fetchUserPosts : activeTab === "likes" ? fetchLikedPosts : fetchSavedPosts}
           showsVerticalScrollIndicator={false}
         />
 
@@ -607,30 +895,43 @@ export default function ProfileScreen() {
                     />
                   </View>
 
-                  {/* Profile Picture URL Input */}
+                  {/* Banner Image Picker */}
                   <View>
-                    <Text className="text-gray-600 font-semibold text-sm mb-1.5">Profile Picture URL</Text>
-                    <TextInput
-                      value={profilePicture}
-                      onChangeText={setProfilePicture}
-                      placeholder="https://example.com/avatar.jpg"
-                      className="border border-gray-200 rounded-xl px-4 py-3 text-base text-gray-900 bg-gray-50"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
+                    <Text className="text-gray-600 font-semibold text-sm mb-2">Banner Image</Text>
+                    <TouchableOpacity
+                      onPress={pickBannerImage}
+                      className="relative w-full h-32 rounded-xl overflow-hidden bg-gray-100 border border-gray-200"
+                    >
+                      <Image
+                        source={{ uri: bannerImage || defaultBanner }}
+                        className="w-full h-full"
+                        resizeMode="cover"
+                      />
+                      <View className="absolute inset-0 bg-black/25 flex items-center justify-center">
+                        <View className="bg-black/50 p-2.5 rounded-full">
+                          <Feather name="camera" size={20} color="white" />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
                   </View>
 
-                  {/* Banner Image URL Input */}
-                  <View>
-                    <Text className="text-gray-600 font-semibold text-sm mb-1.5">Banner Image URL</Text>
-                    <TextInput
-                      value={bannerImage}
-                      onChangeText={setBannerImage}
-                      placeholder="https://example.com/banner.jpg"
-                      className="border border-gray-200 rounded-xl px-4 py-3 text-base text-gray-900 bg-gray-50"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
+                  {/* Profile Picture Picker */}
+                  <View className="items-center my-2">
+                    <Text className="text-gray-600 font-semibold text-sm mb-2 self-start">Profile Picture</Text>
+                    <TouchableOpacity
+                      onPress={pickProfilePicture}
+                      className="relative w-28 h-28 rounded-full overflow-hidden bg-gray-100 border-2 border-white shadow-md"
+                    >
+                      <Image
+                        source={{ uri: profilePicture || defaultAvatar }}
+                        className="w-full h-full"
+                      />
+                      <View className="absolute inset-0 bg-black/25 flex items-center justify-center">
+                        <View className="bg-black/50 p-2 rounded-full">
+                          <Feather name="camera" size={16} color="white" />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
                   </View>
                 </View>
               </ScrollView>

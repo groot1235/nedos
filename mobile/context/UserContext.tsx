@@ -13,8 +13,10 @@ type DbUserType = {
   bannerImage?: string;
   bio?: string;
   location?: string;
+  homeLocality?: string;
   followers: string[];
   following: string[];
+  blockedUsers?: string[];
   createdAt: string;
   updatedAt: string;
 };
